@@ -117,6 +117,9 @@ with tab2:
 
                         if company_exists(company):
                             status.text(f"⚡ {company} already researched today, skipping...")
+                        elif not check_rate_limit():
+                            status.text(f"⚠️ Session limit reached. Stopping after {i} companies.")
+                            break
                         else:
                             result = research_company(company)
                             save_research(result)
