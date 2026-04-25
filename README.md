@@ -4,7 +4,7 @@ An autonomous AI agent that generates real-time company intelligence briefs for 
 
 **[Live Demo →](https://sales-research-agent-bzi73dwliaf9fkpbdliop4.streamlit.app/)**
 
-![Sales Research Agent Screenshot](Screenshot 2026-04-25 102525.png)
+![Sales Research Agent Screenshot](screenshot.png)
 
 ## What It Does
 
