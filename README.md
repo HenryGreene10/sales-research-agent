@@ -4,15 +4,15 @@ An autonomous AI agent that generates real-time company intelligence briefs for 
 
 **[Live Demo →](https://sales-research-agent-bzi73dwliaf9fkpbdliop4.streamlit.app/)**
 
-![Sales Research Agent Screenshot](screenshot.png)
+![Sales Research Agent Screenshot](demo.png)
 
 ## What It Does
 
-A sales rep types in a company name. The agent autonomously:
-1. Decides what information it needs to research
-2. Runs multiple targeted web searches
+A sales rep defines their selling context (what they sell, target company size, industry), then types in a company name. The agent autonomously:
+1. Selects which specialized tools to call (web search, job postings, SEC filings, funding news)
+2. Retrieves similar past companies from its database as scoring benchmarks
 3. Synthesizes findings into a structured brief
-4. Scores the company as a sales opportunity (1-10)
+4. Scores the company 1-10 from the seller's specific perspective
 5. Flags confidence level based on data quality
 
 What takes a junior analyst 2 hours takes this agent 30 seconds.
@@ -21,45 +21,52 @@ What takes a junior analyst 2 hours takes this agent 30 seconds.
 
 Most AI demos just wrap a prompt around ChatGPT. This is different:
 
-- **Agentic** — Claude decides what to search for, not hardcoded logic
-- **RAG** — retrieves live web data instead of relying on training knowledge
-- **Multi-model** — uses cheap Haiku for decisions, Sonnet for synthesis
+- **Agentic** — Claude decides which tools to call and when to stop, not hardcoded logic
+- **Native tool use** — Claude API tool use, not string-parsed ReAct. Claude calls specialized tools (`search_web`, `get_job_postings`, `get_sec_filing`, `get_funding_news`) and declares when it has enough
+- **Seller-personalized** — user defines what they sell, target size, and industry upfront; every score and recommendation is framed from that specific sales perspective
+- **Memory** — past research is stored in SQLite and surfaced as benchmark context when scoring similar companies
+- **Multi-model** — cheap Haiku drives the research loop; Sonnet synthesizes the final brief
 - **Structured output** — consistent JSON schema every time, not freeform text
-- **Cost aware** — hard search limits and model selection keep costs under $0.02/run
+- **Cost aware** — hard tool-call limits and model tiering keep costs under $0.02/run
 
 ## Tech Stack
 
 - **Python** — core language
-- **Claude API (Anthropic)** — reasoning and synthesis
+- **Claude API (Anthropic)** — tool use loop (Haiku) + synthesis (Sonnet)
 - **Tavily API** — real-time web search
 - **Streamlit** — frontend UI
-- **ReAct pattern** — Reasoning + Acting agent loop
+- **SQLite** — persistent company database and benchmark memory
 
 ## Key AI Concepts Demonstrated
 
-- **RAG (Retrieval Augmented Generation)** — fresh data injected into model context
-- **Agentic search** — model autonomously decides search queries
-- **Multi-step reasoning** — search → evaluate → search again → synthesize
+- **Native tool use** — Claude selects and calls tools via the Anthropic tools API
+- **RAG (Retrieval Augmented Generation)** — fresh web data injected into model context
+- **Agentic search** — model autonomously chooses queries and specialized tools
+- **Personalized scoring** — seller context shapes the scoring persona sent to Sonnet
+- **DB-backed memory** — similar past companies retrieved and injected as benchmarks
 - **Structured output parsing** — reliable JSON extraction from LLM responses
 - **Cost optimization** — tiered model usage based on task complexity
 
 ## Architecture
 
 ```
+Seller Context (what you sell, target size, industry)
+↓
 User Input (company name)
 ↓
-Agent Loop (Claude Haiku)
-→ "What do I need to know?"
-→ Search web (Tavily)
-→ "Do I have enough?"
-→ Repeat up to 4x
+Tool-Use Research Loop (Claude Haiku)
+→ Calls: search_web / get_job_postings / get_sec_filing / get_funding_news
+→ Retrieves similar companies from DB as scoring benchmarks
+→ Calls finish_research when done (up to 4 tool calls)
 ↓
 Brief Writer (Claude Sonnet)
-→ Synthesize all findings
-→ Score opportunity 1-10
-→ Flag confidence level
+→ Synthesizes all findings
+→ Scores opportunity 1-10 from seller's perspective
+→ Flags confidence level
 ↓
 Structured Output (JSON → UI)
+→ Saved to SQLite for future benchmarking
+→ Exportable to CSV
 ```
 
 ## Setup
@@ -82,13 +89,15 @@ ANTHROPIC_API_KEY=your-key
 TAVILY_API_KEY=your-key
 ```
 
-## Roadmap
+## Features
 
-- [ ] Batch processing — upload CSV of companies, research all overnight
+- [x] Batch processing — upload CSV of companies, research all at once
+- [x] Persistent database — SQLite tracks every company researched over time
+- [x] Export to CSV — download a ranked opportunity list for your sales team
+- [x] Rate limiting — session-based usage controls (production-ready)
+- [x] Seller context — personalized scoring and framing per seller profile
+- [x] DB-backed memory — past research used as benchmarks for new scoring
 - [ ] Document ingestion — upload prospect PDFs for deeper analysis
-- [ ] Persistent database — track companies over time, see what changed
-- [ ] Export to CSV — ranked opportunity list for sales teams
-- [ ] Rate limiting — production-ready usage controls
 
 ## What I'd Do With More Time
 
