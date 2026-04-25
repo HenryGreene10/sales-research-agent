@@ -65,6 +65,32 @@ def get_all_companies():
     conn.close()
     return rows
 
+def get_similar_companies(company_name: str, user_context: dict = None) -> list:
+    """Return up to 3 highest-scoring past companies, excluding the current one."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT company_name, MAX(opportunity_score) AS score, pain_point, outreach_angle
+        FROM companies
+        WHERE company_name != ?
+          AND opportunity_score IS NOT NULL
+        GROUP BY company_name
+        ORDER BY score DESC
+        LIMIT 3
+    """, (company_name,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "company": row[0],
+            "score": row[1],
+            "pain_point": row[2],
+            "outreach_angle": row[3],
+        }
+        for row in rows
+    ]
+
+
 def company_exists(company_name: str) -> bool:
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()

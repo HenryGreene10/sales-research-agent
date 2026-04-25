@@ -24,6 +24,49 @@ if remaining == 0:
 elif remaining <= 2:
     st.warning(f"⚠️ {remaining} free researches remaining this session")
 
+# ── CONTEXT GATE ───────────────────────────────────────────────
+# Show setup form until the user has defined their selling context.
+if "user_context" not in st.session_state:
+    st.divider()
+    st.subheader("Before we start — who are you selling to?")
+    st.caption("This lets the agent score and frame every brief from your specific perspective.")
+    with st.form("context_form"):
+        what_you_sell = st.text_input("What do you sell?", placeholder="e.g. sales automation software")
+        target_size = st.selectbox(
+            "Target company size",
+            ["Startup", "SMB", "Mid-Market", "Enterprise"]
+        )
+        target_industry = st.text_input("Target industry (optional)", placeholder="e.g. fintech, healthcare")
+        submitted = st.form_submit_button("Start Researching", type="primary")
+
+    if submitted:
+        if not what_you_sell.strip():
+            st.error("Please tell us what you sell.")
+        else:
+            st.session_state.user_context = {
+                "what_you_sell": what_you_sell.strip(),
+                "target_size": target_size,
+                "target_industry": target_industry.strip(),
+            }
+            st.rerun()
+
+    st.stop()  # don't render tabs until context is saved
+
+# Show current context with option to reset
+def _reset_context():
+    for key in ["user_context", "batch_results", "selected_batch_company"]:
+        st.session_state.pop(key, None)
+
+ctx = st.session_state.user_context
+ctx_label = f"{ctx['what_you_sell']} → {ctx['target_size']}"
+if ctx.get("target_industry"):
+    ctx_label += f" · {ctx['target_industry']}"
+with st.expander(f"Selling context: {ctx_label}"):
+    st.write(f"**What you sell:** {ctx['what_you_sell']}")
+    st.write(f"**Target size:** {ctx['target_size']}")
+    st.write(f"**Target industry:** {ctx.get('target_industry') or '—'}")
+    st.button("Reset context", type="secondary", on_click=_reset_context)
+
 
 def render_brief(result: dict):
     if "raw" in result:
@@ -77,7 +120,7 @@ with tab1:
                 st.error("Session limit reached. Refresh to start a new session.")
             else:
                 with st.spinner(f"Researching {company_name}..."):
-                    result = research_company(company_name)
+                    result = research_company(company_name, user_context=st.session_state.user_context)
                     save_research(result)
                     increment_request_count()
 
@@ -121,7 +164,7 @@ with tab2:
                             status.text(f"⚠️ Session limit reached. Stopping after {i} companies.")
                             break
                         else:
-                            result = research_company(company)
+                            result = research_company(company, user_context=st.session_state.user_context)
                             save_research(result)
                             results.append(result)
                             increment_request_count()
