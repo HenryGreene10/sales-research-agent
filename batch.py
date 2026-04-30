@@ -1,60 +1,70 @@
 import pandas as pd
-import json
-import time
-from agent import research_company
-from database import init_db, save_research, company_exists
 
-def process_batch(companies: list) -> list:
-    """Research a list of companies and return results"""
+from agent import research_company
+from database import company_exists
+
+
+def process_batch(
+    companies: list[str],
+    seller_profile: dict,
+    seller_id: int,
+    force_refresh: bool = False,
+) -> list[dict]:
+    """Research a list of companies and return result objects."""
     results = []
     total = len(companies)
-    
+
     for i, company in enumerate(companies):
         company = company.strip()
         if not company:
             continue
-            
-        print(f"\n[{i+1}/{total}] Processing {company}...")
-        
-        # Skip if already researched today
-        if company_exists(company):
-            print(f"  ⚡ Already researched today, loading from database")
-            continue
-        
+
+        print(f"\n[{i + 1}/{total}] Processing {company}...")
+
+        if not force_refresh and company_exists(company, seller_id=seller_id):
+            print("  ⚡ Reusing fresh seller-scoped research run")
+
         try:
-            result = research_company(company)
-            save_research(result)
+            result = research_company(
+                company_name=company,
+                seller_profile=seller_profile,
+                seller_id=seller_id,
+                force_refresh=force_refresh,
+            )
             results.append(result)
-            
-            # Small delay between companies to be nice to the APIs
-            if i < total - 1:
-                print(f"  ⏳ Waiting 2 seconds before next company...")
-                time.sleep(2)
-                
-        except Exception as e:
-            print(f"  ❌ Error researching {company}: {e}")
-            results.append({
-                "company": company,
-                "error": str(e),
-                "opportunity_score": 0,
-                "confidence": "failed"
-            })
-    
+        except Exception as exc:
+            print(f"  ❌ Error researching {company}: {exc}")
+            results.append(
+                {
+                    "company": company,
+                    "error": str(exc),
+                    "opportunity_score": 0.0,
+                    "trigger_score": 0.0,
+                    "confidence": "failed",
+                    "pain_points": [],
+                    "why_now_signals": [],
+                }
+            )
+
     return results
 
-def results_to_dataframe(results: list) -> pd.DataFrame:
-    """Convert results to a pandas dataframe for display"""
+
+def results_to_dataframe(results: list[dict]) -> pd.DataFrame:
     rows = []
-    for r in results:
-        rows.append({
-            "Company": r.get("company", ""),
-            "Score": r.get("opportunity_score", 0),
-            "Confidence": r.get("confidence", ""),
-            "Pain Point": r.get("pain_point", "")[:100] + "..." if r.get("pain_point") else "",
-            "Outreach Angle": r.get("outreach_angle", "")[:100] + "..." if r.get("outreach_angle") else "",
-        })
-    
+    for result in results:
+        rows.append(
+            {
+                "Company": result.get("company", ""),
+                "Opportunity Score": result.get("opportunity_score", 0),
+                "Trigger Score": result.get("trigger_score", 0),
+                "Confidence": result.get("confidence", ""),
+                "Pain Points": " | ".join(result.get("pain_points", [])),
+                "Why Now Signals": " | ".join(result.get("why_now_signals", [])),
+                "Outreach Angle": result.get("outreach_angle", ""),
+            }
+        )
+
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = df.sort_values("Score", ascending=False)
+        df = df.sort_values(["Opportunity Score", "Trigger Score"], ascending=False)
     return df
