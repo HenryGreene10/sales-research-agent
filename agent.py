@@ -44,6 +44,7 @@ from database import (
     get_company_entity_id,
     get_latest_research_run,
     get_recent_research_run,
+    get_recent_research_run_for_resolution,
     get_run_evidence,
     get_similar_companies,
     normalize_company_name,
@@ -803,6 +804,34 @@ def derive_score_components(
     }
 
 
+def build_account_snapshot(
+    company_name: str,
+    resolution: dict[str, Any],
+    tool_results: list[dict[str, Any]],
+    signals: list[dict[str, Any]],
+    score_components: dict[str, Any],
+) -> dict[str, Any]:
+    evidence_items = _flatten_evidence(tool_results)
+    latest_sources = _aggregate_sources(evidence_items)[:5]
+    return {
+        "company": resolution.get("resolved_name") or company_name,
+        "company_type": resolution.get("company_type"),
+        "domain": resolution.get("domain"),
+        "industry": resolution.get("industry"),
+        "signal_types": [signal.get("type") for signal in signals],
+        "top_signal_reasons": [signal.get("reason") for signal in signals[:3]],
+        "source_count": len(latest_sources),
+        "latest_source_titles": [source.get("title") for source in latest_sources],
+        "score_components": {
+            "fit_score": score_components.get("fit_score"),
+            "timing_score": score_components.get("timing_score"),
+            "evidence_score": score_components.get("evidence_score"),
+            "confidence_score": score_components.get("confidence_score"),
+        },
+        "captured_at": utc_now_iso(),
+    }
+
+
 def _fallback_brief(
     company_name: str,
     resolution: dict[str, Any],
@@ -843,6 +872,13 @@ def _fallback_brief(
         "confidence_reason": "Fallback summary was used because the synthesis step failed or external data was limited.",
         "score_rationale": "The score is based on partial evidence and should be treated as directional.",
         "sources": sources,
+        "account_snapshot": build_account_snapshot(
+            company_name=company_name,
+            resolution=resolution,
+            tool_results=tool_results,
+            signals=signals,
+            score_components=components,
+        ),
     }
 
 
@@ -961,6 +997,13 @@ Rules:
     if not brief.get("confidence_reason"):
         brief["confidence_reason"] = derived_scores["confidence_reason"]
     brief["sources"] = sources
+    brief["account_snapshot"] = build_account_snapshot(
+        company_name=company_name,
+        resolution=resolution,
+        tool_results=tool_results,
+        signals=signals,
+        score_components=derived_scores,
+    )
     brief["tool_trace"] = tool_summary
     brief["decision_trace"] = [
         {
@@ -1012,6 +1055,17 @@ def research_company(
             return cached_brief
 
     resolution = resolve_company(company_name)
+    if not force_refresh:
+        resolved_cached = get_recent_research_run_for_resolution(
+            seller_id=seller_id,
+            resolution=resolution,
+            max_age_hours=24,
+        )
+        if resolved_cached and resolved_cached.get("final_brief"):
+            cached_brief = resolved_cached["final_brief"]
+            cached_brief["from_cache"] = True
+            return cached_brief
+
     company_id = upsert_company_resolution(resolution)
     run_id = create_research_run(
         seller_id=seller_id,

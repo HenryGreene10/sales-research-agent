@@ -499,6 +499,102 @@ def get_latest_research_run(seller_id: int, company_name: str) -> dict[str, Any]
     return result
 
 
+def get_recent_research_run_for_resolution(
+    seller_id: int,
+    resolution: dict[str, Any],
+    max_age_hours: int = 24,
+) -> dict[str, Any] | None:
+    candidate_names = {
+        normalize_company_name(resolution.get("input_name", "")),
+        normalize_company_name(resolution.get("resolved_name", "")),
+    }
+    candidate_names = {name for name in candidate_names if name}
+    domain = _canonical_domain(resolution.get("domain"), resolution.get("website"))
+
+    conn = _get_connection()
+    cursor = conn.cursor()
+
+    company_ids: set[int] = set()
+    if domain:
+        cursor.execute(
+            """
+            SELECT id
+            FROM company_entities
+            WHERE domain = ?
+            """,
+            (domain,),
+        )
+        company_ids.update(int(row["id"]) for row in cursor.fetchall())
+
+    if candidate_names:
+        placeholders = ",".join("?" for _ in candidate_names)
+        cursor.execute(
+            f"""
+            SELECT id
+            FROM company_entities
+            WHERE normalized_name IN ({placeholders})
+            """,
+            tuple(candidate_names),
+        )
+        company_ids.update(int(row["id"]) for row in cursor.fetchall())
+
+        cursor.execute(
+            f"""
+            SELECT company_id
+            FROM company_aliases
+            WHERE normalized_alias IN ({placeholders})
+            """,
+            tuple(candidate_names),
+        )
+        company_ids.update(int(row["company_id"]) for row in cursor.fetchall())
+
+    row = None
+    if company_ids:
+        placeholders = ",".join("?" for _ in company_ids)
+        cursor.execute(
+            f"""
+            SELECT rr.*
+            FROM research_runs rr
+            WHERE rr.seller_id = ?
+              AND rr.company_id IN ({placeholders})
+              AND rr.status = 'completed'
+              AND datetime(rr.created_at) >= datetime('now', ?)
+            ORDER BY datetime(rr.created_at) DESC, rr.id DESC
+            LIMIT 1
+            """,
+            (seller_id, *company_ids, f"-{max_age_hours} hours"),
+        )
+        row = cursor.fetchone()
+
+    if row is None and candidate_names:
+        placeholders = ",".join("?" for _ in candidate_names)
+        cursor.execute(
+            f"""
+            SELECT rr.*
+            FROM research_runs rr
+            WHERE rr.seller_id = ?
+              AND rr.normalized_input_name IN ({placeholders})
+              AND rr.status = 'completed'
+              AND datetime(rr.created_at) >= datetime('now', ?)
+            ORDER BY datetime(rr.created_at) DESC, rr.id DESC
+            LIMIT 1
+            """,
+            (seller_id, *candidate_names, f"-{max_age_hours} hours"),
+        )
+        row = cursor.fetchone()
+
+    conn.close()
+    if not row:
+        return None
+
+    result = dict(row)
+    if result.get("final_brief_json"):
+        result["final_brief"] = json.loads(result["final_brief_json"])
+    if result.get("resolved_company_json"):
+        result["resolved_company"] = json.loads(result["resolved_company_json"])
+    return result
+
+
 def get_similar_companies(
     seller_id: int,
     company_id: int | None,
@@ -796,6 +892,49 @@ def get_watchlist_by_company(seller_id: int, company_name: str) -> dict[str, Any
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def get_company_run_history(
+    seller_id: int,
+    company_name: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    normalized_name = normalize_company_name(company_name)
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT rr.*
+        FROM research_runs rr
+        WHERE rr.seller_id = ?
+          AND rr.normalized_input_name = ?
+          AND rr.status = 'completed'
+        ORDER BY datetime(rr.created_at) DESC, rr.id DESC
+        LIMIT ?
+        """,
+        (seller_id, normalized_name, limit),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    history = []
+    for row in rows:
+        item = dict(row)
+        brief = json.loads(item["final_brief_json"]) if item.get("final_brief_json") else {}
+        history.append(
+            {
+                "run_id": item["id"],
+                "company": brief.get("company") or item["input_name"],
+                "opportunity_score": item.get("opportunity_score"),
+                "trigger_score": item.get("trigger_score"),
+                "confidence": item.get("confidence"),
+                "created_at": item.get("created_at"),
+                "why_now_signals": brief.get("why_now_signals", []),
+                "pain_points": brief.get("pain_points", []),
+                "account_snapshot": brief.get("account_snapshot", {}),
+            }
+        )
+    return history
 
 
 def company_exists(company_name: str, seller_id: int, max_age_hours: int = 24) -> bool:

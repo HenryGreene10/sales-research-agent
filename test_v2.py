@@ -231,6 +231,54 @@ class V2ResearchTests(unittest.TestCase):
         self.assertGreater(scores["evidence_score"], 0)
         self.assertIn(scores["confidence"], {"low", "medium", "high"})
 
+    def test_account_snapshot_contains_score_component_summary(self):
+        tool_results = [
+            {
+                "tool_name": "recent_news",
+                "status": "ok",
+                "evidence": [
+                    {
+                        "tool_name": "recent_news",
+                        "query": "example",
+                        "url": "https://example.com/news",
+                        "title": "Expansion news",
+                        "snippet": "The company expanded into Europe.",
+                        "retrieved_at": agent.utc_now_iso(),
+                        "metadata": {},
+                    }
+                ],
+            }
+        ]
+        signals = [
+            {
+                "type": "market_expansion",
+                "reason": "Expansion creates operational complexity.",
+            }
+        ]
+        score_components = {
+            "fit_score": 6.0,
+            "timing_score": 7.0,
+            "evidence_score": 5.5,
+            "confidence_score": 6.1,
+        }
+
+        snapshot = agent.build_account_snapshot(
+            company_name="ExampleCo",
+            resolution={
+                "resolved_name": "ExampleCo",
+                "company_type": "private",
+                "domain": "example.com",
+                "industry": "Software",
+            },
+            tool_results=tool_results,
+            signals=signals,
+            score_components=score_components,
+        )
+
+        self.assertEqual(snapshot["domain"], "example.com")
+        self.assertIn("score_components", snapshot)
+        self.assertEqual(snapshot["score_components"]["fit_score"], 6.0)
+
     def test_research_company_fallback_handles_external_failures(self):
         with patch.object(agent, "_tavily_search", side_effect=RuntimeError("search down")), patch.object(
             agent,
@@ -344,6 +392,30 @@ class V2ResearchTests(unittest.TestCase):
         event_types = {event["event_type"] for event in events}
         self.assertIn("website_messaging_change", event_types)
         self.assertIn("new_source_detected", event_types)
+
+    def test_company_run_history_returns_snapshots(self):
+        self._completed_run(self.seller_id, "HistoryCo", "private", 6.5, "History rationale")
+        history = database.get_company_run_history(self.seller_id, "HistoryCo")
+
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["company"], "HistoryCo")
+        self.assertIn("account_snapshot", history[0])
+
+    def test_recent_run_can_be_found_by_resolution_alias_and_domain(self):
+        self._completed_run(self.seller_id, "Stripe, Inc.", "private", 7.2, "Alias rationale")
+
+        cached = database.get_recent_research_run_for_resolution(
+            seller_id=self.seller_id,
+            resolution={
+                "input_name": "Stripe",
+                "resolved_name": "Stripe, Inc.",
+                "domain": "stripe, inc..com",
+                "website": "https://stripe, inc..com",
+            },
+        )
+
+        self.assertIsNotNone(cached)
+        self.assertEqual(cached["final_brief"]["company"], "Stripe, Inc.")
 
 
 if __name__ == "__main__":

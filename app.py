@@ -7,6 +7,7 @@ from database import (
     company_exists,
     create_or_update_watchlist,
     get_all_research_runs,
+    get_company_run_history,
     get_watchlist_by_company,
     get_watchlist_events,
     get_watchlists,
@@ -135,6 +136,21 @@ def render_brief(result: dict, key_prefix: str = "brief"):
         for source in sources:
             title = source.get("title") or source.get("url")
             st.markdown(f"- [{title}]({source.get('url')}) via `{source.get('tool_name', 'unknown')}`")
+
+    with st.expander("Score Breakdown"):
+        st.json(
+            {
+                "opportunity_score": result.get("opportunity_score"),
+                "fit_score": result.get("fit_score"),
+                "timing_score": result.get("timing_score"),
+                "evidence_score": result.get("evidence_score"),
+                "trigger_score": result.get("trigger_score"),
+                "confidence_score": result.get("confidence_score"),
+            }
+        )
+
+    with st.expander("Account Snapshot"):
+        st.json(result.get("account_snapshot", {}))
 
     with st.expander("Agent Trace"):
         st.write("Tool Trace")
@@ -409,10 +425,34 @@ with tab3:
             for watchlist in watchlists:
                 if watchlist.get("input_name") == selected_watchlist_company:
                     recent_events = get_watchlist_events(watchlist["id"])
+                    run_history = get_company_run_history(
+                        seller_id=st.session_state["seller_id"],
+                        company_name=selected_watchlist_company,
+                        limit=8,
+                    )
                     if recent_events:
                         st.write("Recent watchlist events")
                         for event in recent_events:
                             st.write(f"- `{event['created_at']}` {event['title']}")
+                    if run_history:
+                        st.write("Score history")
+                        history_df = pd.DataFrame(
+                            [
+                                {
+                                    "Created At": item["created_at"],
+                                    "Opportunity Score": item["opportunity_score"],
+                                    "Trigger Score": item["trigger_score"],
+                                    "Confidence": item["confidence"],
+                                    "Signals": " | ".join(item["why_now_signals"]),
+                                }
+                                for item in run_history
+                            ]
+                        )
+                        st.dataframe(history_df, use_container_width=True)
+                        latest_snapshot = run_history[0].get("account_snapshot") or {}
+                        if latest_snapshot:
+                            st.write("Latest account snapshot")
+                            st.json(latest_snapshot)
                     break
 
             render_brief(refreshed["brief"], key_prefix=f"watchlist_{selected_watchlist_company}")
