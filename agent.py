@@ -264,7 +264,63 @@ def _format_evidence_for_prompt(evidence_items: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _official_candidate(evidence_items: list[dict[str, Any]]) -> tuple[str, str]:
+def _company_name_tokens(company_name: str) -> list[str]:
+    stripped = normalize_company_name(company_name)
+    suffixes = {
+        "inc",
+        "corp",
+        "corporation",
+        "company",
+        "co",
+        "llc",
+        "ltd",
+        "group",
+        "holdings",
+        "technologies",
+        "technology",
+    }
+    return [token for token in stripped.split() if token not in suffixes]
+
+
+def _score_resolution_candidate(company_name: str, item: dict[str, Any]) -> tuple[int, str, str]:
+    url = item.get("url", "")
+    title = (item.get("title") or "").lower()
+    snippet = (item.get("snippet") or "").lower()
+    domain = _extract_domain(url)
+    if not domain or _domain_is_blocked(domain):
+        return (-999, domain, url)
+
+    score = 0
+    root_domain = domain.split(".")[0]
+    company_tokens = _company_name_tokens(company_name)
+
+    if any(token == root_domain or token in root_domain for token in company_tokens):
+        score += 6
+    if any(token in title for token in company_tokens):
+        score += 3
+    if any(token in snippet for token in company_tokens):
+        score += 2
+    if any(marker in title for marker in ["official", "homepage", "investor relations", "careers"]):
+        score += 2
+    if any(marker in domain for marker in ["news", "blog", "medium", "substack", "prnewswire"]):
+        score -= 3
+    if any(marker in title for marker in ["press release", "news", "funding", "announcement"]) and not any(
+        token == root_domain or token in root_domain for token in company_tokens
+    ):
+        score -= 2
+
+    return (score, domain, url)
+
+
+def _official_candidate(company_name: str, evidence_items: list[dict[str, Any]]) -> tuple[str, str]:
+    ranked = sorted(
+        (_score_resolution_candidate(company_name, item) for item in evidence_items),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    for score, domain, url in ranked:
+        if score > -999:
+            return domain, url
     for item in evidence_items:
         domain = _extract_domain(item.get("url"))
         if domain and not _domain_is_blocked(domain):
@@ -286,23 +342,17 @@ def _cik_from_text(text: str) -> str | None:
     return None
 
 
-def _heuristic_resolution(company_name: str, evidence_items: list[dict[str, Any]]) -> dict[str, Any]:
-    full_text = " ".join(
-        f"{item.get('title', '')} {item.get('snippet', '')} {item.get('url', '')}"
-        for item in evidence_items
-    ).lower()
-    domain, website = _official_candidate(evidence_items)
-    ticker = _ticker_from_text(full_text.upper())
-    cik = _cik_from_text(full_text)
+def _infer_company_type(full_text: str) -> str:
+    if any(token in full_text for token in ["10-k", "10-q", "investor relations", "nasdaq", "nyse", "earnings call"]):
+        return "public"
+    if any(token in full_text for token in ["series a", "series b", "series c", "funding", "venture", "private company"]):
+        return "private"
+    if any(token in full_text for token in ["location", "hours", "yelp", "tripadvisor", "restaurant", "near me"]):
+        return "local"
+    return "unknown"
 
-    if any(token in full_text for token in ["10-k", "investor relations", "nasdaq", "nyse", "earnings call"]):
-        company_type = "public"
-    elif any(token in full_text for token in ["series a", "series b", "series c", "funding", "venture"]):
-        company_type = "private"
-    else:
-        company_type = "unknown"
 
-    industry = None
+def _infer_industry(full_text: str) -> str | None:
     for keyword, label in [
         ("fintech", "Fintech"),
         ("healthcare", "Healthcare"),
@@ -311,10 +361,39 @@ def _heuristic_resolution(company_name: str, evidence_items: list[dict[str, Any]
         ("sales", "Sales Software"),
         ("payments", "Payments"),
         ("ai", "AI Software"),
+        ("restaurant", "Local Services"),
+        ("retail", "Retail"),
     ]:
         if keyword in full_text:
-            industry = label
-            break
+            return label
+    return None
+
+
+def _build_resolution_trace(company_name: str, evidence_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    trace = []
+    for item in evidence_items[:5]:
+        score, domain, url = _score_resolution_candidate(company_name, item)
+        trace.append(
+            {
+                "title": item.get("title", ""),
+                "domain": domain,
+                "url": url,
+                "score": score,
+            }
+        )
+    return trace
+
+
+def _heuristic_resolution(company_name: str, evidence_items: list[dict[str, Any]]) -> dict[str, Any]:
+    full_text = " ".join(
+        f"{item.get('title', '')} {item.get('snippet', '')} {item.get('url', '')}"
+        for item in evidence_items
+    ).lower()
+    domain, website = _official_candidate(company_name, evidence_items)
+    ticker = _ticker_from_text(full_text.upper())
+    cik = _cik_from_text(full_text)
+    company_type = _infer_company_type(full_text)
+    industry = _infer_industry(full_text)
 
     confidence = 0.45
     if website:
@@ -336,6 +415,7 @@ def _heuristic_resolution(company_name: str, evidence_items: list[dict[str, Any]
         "industry": industry,
         "confidence": round(min(confidence, 0.95), 2),
         "evidence": evidence_items[:3],
+        "resolution_trace": _build_resolution_trace(company_name, evidence_items),
     }
 
 
@@ -372,6 +452,7 @@ def resolve_company(company_name: str) -> dict[str, Any]:
                 "metadata": {"error": str(exc)},
             }
         ]
+        resolution["resolution_trace"] = []
         return resolution
 
     fallback = _heuristic_resolution(company_name, evidence_items)
@@ -389,7 +470,8 @@ Return ONLY valid JSON with these fields:
   "cik": "cik or null",
   "industry": "industry or null",
   "confidence": 0.0,
-  "evidence": []
+  "evidence": [],
+  "resolution_trace": []
 }}
 
 Use the evidence below. Prefer the official company website over directory sites.
@@ -412,8 +494,14 @@ Evidence:
     )
     resolved["confidence"] = round(_safe_float(resolved.get("confidence"), fallback["confidence"]), 2)
     resolved["evidence"] = evidence_items[:3]
+    resolved["resolution_trace"] = _build_resolution_trace(company_name, evidence_items)
     if resolved.get("company_type") not in {"public", "private", "local", "unknown"}:
         resolved["company_type"] = fallback["company_type"]
+    if not resolved.get("domain") and fallback.get("domain"):
+        resolved["domain"] = fallback["domain"]
+        resolved["website"] = fallback.get("website") or resolved.get("website")
+    if not resolved.get("industry"):
+        resolved["industry"] = fallback.get("industry")
     return resolved
 
 
@@ -832,6 +920,41 @@ def build_account_snapshot(
     }
 
 
+def build_score_explanation(
+    company_name: str,
+    score_components: dict[str, Any],
+    signals: list[dict[str, Any]],
+) -> list[str]:
+    explanation = []
+    fit_score = _safe_float(score_components.get("fit_score"), 0)
+    timing_score = _safe_float(score_components.get("timing_score"), 0)
+    evidence_score = _safe_float(score_components.get("evidence_score"), 0)
+
+    if fit_score >= 7:
+        explanation.append(f"{company_name} looks like a strong fit based on seller-context overlap and comparable account patterns.")
+    elif fit_score >= 5:
+        explanation.append(f"{company_name} appears to be a moderate fit, but the match is not strong enough to rely on without validation.")
+    else:
+        explanation.append(f"{company_name} does not yet show a strong fit signal from the available evidence.")
+
+    if timing_score >= 7 and signals:
+        top_signal_types = ", ".join(signal.get("type", "signal").replace("_", " ") for signal in signals[:2])
+        explanation.append(f"Timing is elevated because recent signals were detected, especially around {top_signal_types}.")
+    elif timing_score >= 5:
+        explanation.append("Timing is plausible, but the why-now case is still moderate rather than urgent.")
+    else:
+        explanation.append("Timing looks weak right now because recent trigger evidence is limited.")
+
+    if evidence_score >= 7:
+        explanation.append("The evidence base is relatively strong, with multiple successful tools and distinct supporting sources.")
+    elif evidence_score >= 5:
+        explanation.append("The evidence base is usable but still somewhat thin or mixed.")
+    else:
+        explanation.append("The evidence base is weak, so this score should be treated as directional.")
+
+    return explanation
+
+
 def _fallback_brief(
     company_name: str,
     resolution: dict[str, Any],
@@ -878,6 +1001,11 @@ def _fallback_brief(
             tool_results=tool_results,
             signals=signals,
             score_components=components,
+        ),
+        "score_explanation": build_score_explanation(
+            company_name=resolution.get("resolved_name") or company_name,
+            score_components=components,
+            signals=signals,
         ),
     }
 
@@ -997,6 +1125,15 @@ Rules:
     if not brief.get("confidence_reason"):
         brief["confidence_reason"] = derived_scores["confidence_reason"]
     brief["sources"] = sources
+    brief["score_explanation"] = build_score_explanation(
+        company_name=brief["company"],
+        score_components={
+            "fit_score": brief["fit_score"],
+            "timing_score": brief["timing_score"],
+            "evidence_score": brief["evidence_score"],
+        },
+        signals=signals,
+    )
     brief["account_snapshot"] = build_account_snapshot(
         company_name=company_name,
         resolution=resolution,

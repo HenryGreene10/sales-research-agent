@@ -115,6 +115,25 @@ class V2ResearchTests(unittest.TestCase):
         self.assertEqual(result["domain"], "stripe.com")
         self.assertEqual(result["company_type"], "private")
 
+    def test_resolution_prefers_official_domain_over_news_source(self):
+        evidence = [
+            {
+                "url": "https://news.example.com/stripe-funding",
+                "title": "Stripe funding update",
+                "snippet": "Stripe announced fresh funding.",
+            },
+            {
+                "url": "https://stripe.com",
+                "title": "Stripe | Financial Infrastructure",
+                "snippet": "Official homepage for Stripe.",
+            },
+        ]
+
+        resolution = agent._heuristic_resolution("Stripe", evidence)
+
+        self.assertEqual(resolution["domain"], "stripe.com")
+        self.assertTrue(resolution["resolution_trace"])
+
     def test_routing_logic_changes_by_company_type(self):
         public_plan = agent.build_research_plan(
             {
@@ -278,6 +297,21 @@ class V2ResearchTests(unittest.TestCase):
         self.assertEqual(snapshot["domain"], "example.com")
         self.assertIn("score_components", snapshot)
         self.assertEqual(snapshot["score_components"]["fit_score"], 6.0)
+
+    def test_score_explanation_is_human_readable(self):
+        explanation = agent.build_score_explanation(
+            company_name="ExampleCo",
+            score_components={
+                "fit_score": 7.5,
+                "timing_score": 8.0,
+                "evidence_score": 6.5,
+            },
+            signals=[{"type": "funding"}, {"type": "product_launch"}],
+        )
+
+        self.assertEqual(len(explanation), 3)
+        self.assertTrue(any("strong fit" in line.lower() for line in explanation))
+        self.assertTrue(any("timing" in line.lower() for line in explanation))
 
     def test_research_company_fallback_handles_external_failures(self):
         with patch.object(agent, "_tavily_search", side_effect=RuntimeError("search down")), patch.object(

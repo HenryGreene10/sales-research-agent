@@ -126,8 +126,20 @@ def render_brief(result: dict, key_prefix: str = "brief"):
         st.subheader("Confidence Reason")
         st.write(result.get("confidence_reason") or "No confidence detail available.")
 
+        st.subheader("Score Explanation")
+        score_explanation = result.get("score_explanation") or []
+        if score_explanation:
+            for line in score_explanation:
+                st.write(f"- {line}")
+        else:
+            st.write("No score explanation available.")
+
     with st.expander("Resolved Company"):
         st.json(result.get("resolved_company", {}))
+
+    with st.expander("Resolution Trace"):
+        resolved_company = result.get("resolved_company", {})
+        st.json(resolved_company.get("resolution_trace", []))
 
     with st.expander("Sources"):
         sources = result.get("sources") or []
