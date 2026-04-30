@@ -44,6 +44,7 @@ from database import (
     get_company_entity_id,
     get_latest_research_run,
     get_recent_research_run,
+    get_run_evidence,
     get_similar_companies,
     normalize_company_name,
     touch_watchlist,
@@ -608,6 +609,119 @@ def _aggregate_sources(evidence_items: list[dict[str, Any]]) -> list[dict[str, s
     return sources
 
 
+def _snippets_for_tool(evidence_items: list[dict[str, Any]], tool_name: str) -> list[str]:
+    snippets = []
+    for item in evidence_items:
+        if item.get("tool_name") != tool_name:
+            continue
+        snippet = " ".join(
+            part.strip()
+            for part in [item.get("title", ""), item.get("snippet", "")]
+            if part and part.strip()
+        )
+        if snippet:
+            snippets.append(snippet)
+    return snippets
+
+
+def _source_urls_for_tool(evidence_items: list[dict[str, Any]], tool_name: str) -> set[str]:
+    return {
+        item.get("url", "")
+        for item in evidence_items
+        if item.get("tool_name") == tool_name and item.get("url")
+    }
+
+
+def compare_run_changes(previous_brief: dict[str, Any], latest_brief: dict[str, Any]) -> list[dict[str, Any]]:
+    events = []
+    previous_signals = set(previous_brief.get("why_now_signals", []))
+    latest_signals = set(latest_brief.get("why_now_signals", []))
+    new_signals = sorted(latest_signals - previous_signals)
+    if new_signals:
+        events.append(
+            {
+                "event_type": "new_signal",
+                "title": f"New why-now trigger for {latest_brief.get('company')}",
+                "summary": "; ".join(new_signals),
+                "payload": {"new_signals": new_signals},
+            }
+        )
+
+    previous_score = _safe_float(previous_brief.get("opportunity_score"), 0.0)
+    latest_score = _safe_float(latest_brief.get("opportunity_score"), 0.0)
+    score_delta = round(latest_score - previous_score, 1)
+    if abs(score_delta) >= 1.0:
+        direction = "increased" if score_delta > 0 else "decreased"
+        events.append(
+            {
+                "event_type": "score_change",
+                "title": f"Opportunity score {direction} for {latest_brief.get('company')}",
+                "summary": f"Score moved from {previous_score} to {latest_score}.",
+                "payload": {
+                    "previous_score": previous_score,
+                    "latest_score": latest_score,
+                    "delta": score_delta,
+                },
+            }
+        )
+
+    previous_trigger = _safe_float(previous_brief.get("trigger_score"), 0.0)
+    latest_trigger = _safe_float(latest_brief.get("trigger_score"), 0.0)
+    trigger_delta = round(latest_trigger - previous_trigger, 1)
+    if abs(trigger_delta) >= 1.0:
+        direction = "increased" if trigger_delta > 0 else "decreased"
+        events.append(
+            {
+                "event_type": "trigger_score_change",
+                "title": f"Trigger score {direction} for {latest_brief.get('company')}",
+                "summary": f"Trigger score moved from {previous_trigger} to {latest_trigger}.",
+                "payload": {
+                    "previous_trigger_score": previous_trigger,
+                    "latest_trigger_score": latest_trigger,
+                    "delta": trigger_delta,
+                },
+            }
+        )
+
+    return events
+
+
+def compare_run_evidence_changes(
+    previous_evidence: list[dict[str, Any]],
+    latest_evidence: list[dict[str, Any]],
+    company_name: str,
+) -> list[dict[str, Any]]:
+    events = []
+
+    previous_website = set(_snippets_for_tool(previous_evidence, "website_positioning"))
+    latest_website = set(_snippets_for_tool(latest_evidence, "website_positioning"))
+    new_website_messages = sorted(latest_website - previous_website)
+    if new_website_messages:
+        events.append(
+            {
+                "event_type": "website_messaging_change",
+                "title": f"Website messaging changed for {company_name}",
+                "summary": new_website_messages[0][:240],
+                "payload": {"new_messaging_snippets": new_website_messages[:3]},
+            }
+        )
+
+    previous_news_sources = _source_urls_for_tool(previous_evidence, "recent_news")
+    latest_news_sources = _source_urls_for_tool(latest_evidence, "recent_news")
+    new_news_sources = sorted(latest_news_sources - previous_news_sources)
+    if new_news_sources:
+        events.append(
+            {
+                "event_type": "new_source_detected",
+                "title": f"New recent-news source detected for {company_name}",
+                "summary": new_news_sources[0],
+                "payload": {"new_source_urls": new_news_sources[:5]},
+            }
+        )
+
+    return events
+
+
 def _shared_context_terms(seller_profile: dict[str, Any], evidence_items: list[dict[str, Any]]) -> int:
     profile_text = " ".join(
         [
@@ -963,6 +1077,7 @@ def monitor_watchlist(
 ) -> dict[str, Any]:
     previous_run = get_latest_research_run(seller_id, company_name)
     previous_brief = previous_run.get("final_brief") if previous_run else None
+    previous_evidence = get_run_evidence(previous_run["id"]) if previous_run else []
 
     latest_brief = research_company(
         company_name=company_name,
@@ -972,6 +1087,7 @@ def monitor_watchlist(
     )
     latest_run = get_latest_research_run(seller_id, company_name)
     latest_run_id = latest_run.get("id") if latest_run else None
+    latest_evidence = get_run_evidence(latest_run_id) if latest_run_id else []
 
     events = []
     if previous_brief is None:
@@ -984,36 +1100,8 @@ def monitor_watchlist(
             }
         )
     else:
-        previous_signals = set(previous_brief.get("why_now_signals", []))
-        latest_signals = set(latest_brief.get("why_now_signals", []))
-        new_signals = sorted(latest_signals - previous_signals)
-        if new_signals:
-            events.append(
-                {
-                    "event_type": "new_signal",
-                    "title": f"New why-now trigger for {company_name}",
-                    "summary": "; ".join(new_signals),
-                    "payload": {"new_signals": new_signals},
-                }
-            )
-
-        previous_score = _safe_float(previous_brief.get("opportunity_score"), 0.0)
-        latest_score = _safe_float(latest_brief.get("opportunity_score"), 0.0)
-        score_delta = round(latest_score - previous_score, 1)
-        if abs(score_delta) >= 1.0:
-            direction = "increased" if score_delta > 0 else "decreased"
-            events.append(
-                {
-                    "event_type": "score_change",
-                    "title": f"Opportunity score {direction} for {company_name}",
-                    "summary": f"Score moved from {previous_score} to {latest_score}.",
-                    "payload": {
-                        "previous_score": previous_score,
-                        "latest_score": latest_score,
-                        "delta": score_delta,
-                    },
-                }
-            )
+        events.extend(compare_run_changes(previous_brief, latest_brief))
+        events.extend(compare_run_evidence_changes(previous_evidence, latest_evidence, company_name))
 
     for event in events:
         add_watchlist_event(

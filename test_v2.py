@@ -309,6 +309,42 @@ class V2ResearchTests(unittest.TestCase):
         self.assertTrue(any(event["event_type"] == "new_signal" for event in events))
         self.assertEqual(events[0]["watchlist_id"], watchlist_id)
 
+    def test_compare_run_evidence_changes_detects_website_and_source_deltas(self):
+        previous_evidence = [
+            {
+                "tool_name": "website_positioning",
+                "title": "Old positioning",
+                "snippet": "Legacy workflow automation messaging",
+                "url": "https://example.com/old",
+            },
+            {
+                "tool_name": "recent_news",
+                "title": "Old news",
+                "snippet": "Old event",
+                "url": "https://news.example.com/old",
+            },
+        ]
+        latest_evidence = [
+            {
+                "tool_name": "website_positioning",
+                "title": "New positioning",
+                "snippet": "AI revenue workflow platform for enterprise teams",
+                "url": "https://example.com/new",
+            },
+            {
+                "tool_name": "recent_news",
+                "title": "New source",
+                "snippet": "Fresh announcement",
+                "url": "https://news.example.com/new",
+            },
+        ]
+
+        events = agent.compare_run_evidence_changes(previous_evidence, latest_evidence, "SignalCo")
+
+        event_types = {event["event_type"] for event in events}
+        self.assertIn("website_messaging_change", event_types)
+        self.assertIn("new_source_detected", event_types)
+
 
 if __name__ == "__main__":
     unittest.main()
