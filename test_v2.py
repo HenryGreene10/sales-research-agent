@@ -313,6 +313,35 @@ class V2ResearchTests(unittest.TestCase):
         self.assertTrue(any("strong fit" in line.lower() for line in explanation))
         self.assertTrue(any("timing" in line.lower() for line in explanation))
 
+    def test_snapshot_delta_highlights_score_and_signal_changes(self):
+        delta = agent.build_snapshot_delta(
+            previous_snapshot={
+                "signal_types": ["funding"],
+                "latest_source_titles": ["Old source"],
+                "score_components": {
+                    "fit_score": 5.0,
+                    "timing_score": 4.0,
+                    "evidence_score": 4.5,
+                    "confidence_score": 5.0,
+                },
+            },
+            latest_snapshot={
+                "signal_types": ["funding", "product_launch"],
+                "latest_source_titles": ["Old source", "New source"],
+                "score_components": {
+                    "fit_score": 6.0,
+                    "timing_score": 7.0,
+                    "evidence_score": 6.5,
+                    "confidence_score": 6.0,
+                },
+            },
+        )
+
+        self.assertEqual(delta["fit_score_change"], 1.0)
+        self.assertEqual(delta["timing_score_change"], 3.0)
+        self.assertIn("product_launch", delta["new_signal_types"])
+        self.assertIn("New source", delta["new_source_titles"])
+
     def test_research_company_fallback_handles_external_failures(self):
         with patch.object(agent, "_tavily_search", side_effect=RuntimeError("search down")), patch.object(
             agent,

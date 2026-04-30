@@ -955,6 +955,42 @@ def build_score_explanation(
     return explanation
 
 
+def build_snapshot_delta(
+    previous_snapshot: dict[str, Any] | None,
+    latest_snapshot: dict[str, Any] | None,
+) -> dict[str, Any]:
+    previous_snapshot = previous_snapshot or {}
+    latest_snapshot = latest_snapshot or {}
+    previous_scores = (previous_snapshot.get("score_components") or {})
+    latest_scores = (latest_snapshot.get("score_components") or {})
+
+    delta = {
+        "fit_score_change": round(
+            _safe_float(latest_scores.get("fit_score"), 0) - _safe_float(previous_scores.get("fit_score"), 0),
+            1,
+        ),
+        "timing_score_change": round(
+            _safe_float(latest_scores.get("timing_score"), 0) - _safe_float(previous_scores.get("timing_score"), 0),
+            1,
+        ),
+        "evidence_score_change": round(
+            _safe_float(latest_scores.get("evidence_score"), 0) - _safe_float(previous_scores.get("evidence_score"), 0),
+            1,
+        ),
+        "confidence_score_change": round(
+            _safe_float(latest_scores.get("confidence_score"), 0) - _safe_float(previous_scores.get("confidence_score"), 0),
+            1,
+        ),
+        "new_signal_types": sorted(
+            set(latest_snapshot.get("signal_types", [])) - set(previous_snapshot.get("signal_types", []))
+        ),
+        "new_source_titles": sorted(
+            set(latest_snapshot.get("latest_source_titles", [])) - set(previous_snapshot.get("latest_source_titles", []))
+        ),
+    }
+    return delta
+
+
 def _fallback_brief(
     company_name: str,
     resolution: dict[str, Any],

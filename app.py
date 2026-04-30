@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-from agent import monitor_watchlist, research_company
+from agent import build_snapshot_delta, monitor_watchlist, research_company
 from batch import results_to_dataframe
 from database import (
     company_exists,
@@ -462,6 +462,11 @@ with tab3:
                         )
                         st.dataframe(history_df, use_container_width=True)
                         latest_snapshot = run_history[0].get("account_snapshot") or {}
+                        if len(run_history) >= 2:
+                            previous_snapshot = run_history[1].get("account_snapshot") or {}
+                            snapshot_delta = build_snapshot_delta(previous_snapshot, latest_snapshot)
+                            st.write("Latest snapshot delta")
+                            st.json(snapshot_delta)
                         if latest_snapshot:
                             st.write("Latest account snapshot")
                             st.json(latest_snapshot)
