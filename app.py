@@ -1,6 +1,7 @@
 import csv
 import io
 
+import pandas as pd
 import streamlit as st
 
 from agent import build_snapshot_delta, monitor_watchlist, research_company
