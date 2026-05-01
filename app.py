@@ -2,7 +2,7 @@ import pandas as pd
 import streamlit as st
 
 from agent import build_snapshot_delta, monitor_watchlist, research_company
-from batch import results_to_dataframe
+from batch import results_to_dataframe, summarize_batch_results
 from database import (
     company_exists,
     create_or_update_watchlist,
@@ -343,6 +343,15 @@ with tab2:
     batch_results = st.session_state.get("batch_results")
     if batch_results:
         st.subheader("Ranked Opportunities")
+        batch_summary = summarize_batch_results(batch_results)
+        st.caption(
+            f"{batch_summary['successful']} successful · "
+            f"{batch_summary['failed']} failed · "
+            f"{batch_summary['cached']} from cache"
+        )
+        if batch_summary["failed"]:
+            failed_companies = ", ".join(batch_summary["failed_companies"])
+            st.warning(f"Some accounts failed but the batch completed: {failed_companies}")
 
         sorted_results = sorted(
             batch_results,

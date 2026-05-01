@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 import agent
+import batch
 import database
 
 
@@ -463,6 +464,68 @@ class V2ResearchTests(unittest.TestCase):
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0]["company"], "HistoryCo")
         self.assertIn("account_snapshot", history[0])
+
+    def test_execute_tool_plan_isolates_timeout_failures(self):
+        plan = [
+            {"tool_name": "recent_news", "query": "SignalCo latest news"},
+            {"tool_name": "jobs_and_hiring", "query": "SignalCo hiring"},
+        ]
+        successful_result = {
+            "tool_name": "jobs_and_hiring",
+            "query": "SignalCo hiring",
+            "status": "ok",
+            "retrieved_at": agent.utc_now_iso(),
+            "freshness_days": 90,
+            "intent": "hiring_momentum",
+            "evidence": [],
+            "error": None,
+        }
+
+        with patch.object(
+            agent,
+            "_search_tool",
+            side_effect=[TimeoutError("Tavily search timed out after 20 seconds"), successful_result],
+        ):
+            results = agent.execute_tool_plan(plan)
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["status"], "error")
+        self.assertEqual(results[0]["error_type"], "TimeoutError")
+        self.assertEqual(results[0]["intent"], "recent_signals")
+        self.assertEqual(results[1]["status"], "ok")
+
+    def test_batch_processing_collects_failures_without_stopping(self):
+        successful_result = {
+            "company": "Alpha",
+            "opportunity_score": 7.5,
+            "trigger_score": 6.0,
+            "confidence": "high",
+            "pain_points": [],
+            "why_now_signals": [],
+            "outreach_angle": "Lead with workflow speed.",
+        }
+
+        with patch.object(batch, "company_exists", return_value=False), patch.object(
+            batch,
+            "research_company",
+            side_effect=[successful_result, RuntimeError("search down"), {**successful_result, "company": "Gamma", "from_cache": True}],
+        ):
+            results = batch.process_batch(
+                companies=["Alpha", "Beta", "Gamma"],
+                seller_profile=self.seller_profile,
+                seller_id=self.seller_id,
+                force_refresh=True,
+            )
+
+        summary = batch.summarize_batch_results(results)
+        dataframe = batch.results_to_dataframe(results)
+
+        self.assertEqual(len(results), 3)
+        self.assertEqual(summary["successful"], 2)
+        self.assertEqual(summary["failed"], 1)
+        self.assertIn("Beta", summary["failed_companies"])
+        self.assertIn("Error", dataframe.columns)
+        self.assertTrue(any(dataframe["Company"] == "Beta"))
 
     def test_recent_run_can_be_found_by_resolution_alias_and_domain(self):
         self._completed_run(self.seller_id, "Stripe, Inc.", "private", 7.2, "Alias rationale")

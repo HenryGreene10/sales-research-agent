@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -67,6 +68,8 @@ tavily = TavilyClient(api_key=TAVILY_API_KEY) if TavilyClient is not None and TA
 HAIKU = "claude-haiku-4-5-20251001"
 SONNET = "claude-sonnet-4-6"
 NOW = lambda: datetime.now(timezone.utc)
+SEARCH_TIMEOUT_SECONDS = 20
+LLM_TIMEOUT_SECONDS = 45
 
 BLOCKED_OFFICIAL_DOMAINS = {
     "linkedin.com",
@@ -232,11 +235,37 @@ def _parse_json_response(text: str, fallback: dict[str, Any]) -> dict[str, Any]:
         return fallback
 
 
+def _run_with_timeout(
+    func,
+    *args: Any,
+    timeout_seconds: int,
+    operation_name: str,
+    **kwargs: Any,
+) -> Any:
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(func, *args, **kwargs)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FutureTimeoutError as exc:
+        future.cancel()
+        raise TimeoutError(
+            f"{operation_name} timed out after {timeout_seconds} seconds"
+        ) from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
 @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(3), reraise=True)
 def _tavily_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
     if tavily is None:
         raise RuntimeError("TAVILY_API_KEY is not configured")
-    results = tavily.search(query=query, max_results=max_results)
+    results = _run_with_timeout(
+        tavily.search,
+        query=query,
+        max_results=max_results,
+        timeout_seconds=SEARCH_TIMEOUT_SECONDS,
+        operation_name="Tavily search",
+    )
     return results.get("results", [])
 
 
@@ -244,10 +273,13 @@ def _tavily_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
 def _claude_message(model: str, prompt: str, max_tokens: int = 1000) -> str:
     if claude is None:
         raise RuntimeError("ANTHROPIC_API_KEY is not configured")
-    response = claude.messages.create(
+    response = _run_with_timeout(
+        claude.messages.create,
         model=model,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
+        timeout_seconds=LLM_TIMEOUT_SECONDS,
+        operation_name=f"Claude {model} request",
     )
     return response.content[0].text
 
@@ -622,22 +654,28 @@ def _search_tool(plan_item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _tool_error_result(plan_item: dict[str, Any], exc: Exception) -> dict[str, Any]:
+    freshness = FRESHNESS_POLICIES.get(plan_item["tool_name"], {})
+    return {
+        "tool_name": plan_item["tool_name"],
+        "query": plan_item.get("query", ""),
+        "status": "error",
+        "retrieved_at": utc_now_iso(),
+        "freshness_days": freshness.get("freshness_days"),
+        "intent": freshness.get("intent"),
+        "evidence": [],
+        "error": str(exc),
+        "error_type": type(exc).__name__,
+    }
+
+
 def execute_tool_plan(plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
     results = []
     for item in plan:
         try:
             results.append(_search_tool(item))
         except Exception as exc:
-            results.append(
-                {
-                    "tool_name": item["tool_name"],
-                    "query": item.get("query", ""),
-                    "status": "error",
-                    "retrieved_at": utc_now_iso(),
-                    "evidence": [],
-                    "error": str(exc),
-                }
-            )
+            results.append(_tool_error_result(item, exc))
     return results
 
 
