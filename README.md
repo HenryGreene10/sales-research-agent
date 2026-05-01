@@ -30,9 +30,9 @@ The current version is a working V2:
 
 The core V2 workflow is implemented. What remains is production polish: more screenshots and docs, larger-scale soak testing, and operational automation around recurring refreshes.
 
-## V2 Direction
+## V2 Outcome
 
-V2 upgrades this project from a demo-grade research agent into a more credible commercial intelligence product.
+V2 upgraded this project from a demo-grade research agent into a more credible commercial intelligence product.
 
 Core product goal:
 
@@ -46,6 +46,8 @@ Seller profile
 → export results
 
 The focus is not “more AI for its own sake.” The focus is trust, routing intelligence, provenance, personalization, and signal detection.
+
+V2 is now complete in the repo: the workflow, persistence model, inspectability, watchlists, runtime safety, and batch fault tolerance are all implemented.
 
 ## Why This Is Not A Chatbot
 
@@ -101,7 +103,7 @@ Structured Output (JSON → UI)
 → Exportable to CSV
 ```
 
-### V2 Target
+### V2 Architecture
 
 ```
 Seller Profile
@@ -181,197 +183,32 @@ TAVILY_API_KEY=your-key
 
 ## Features
 
-- [x] Batch processing — upload CSV of companies, research all at once
-- [x] Persistent database — SQLite tracks every company researched over time
+- [x] Company resolution — normalize names, resolve domain/website, and classify company type before research
+- [x] Dynamic routing — choose tools and freshness windows based on the resolved company
+- [x] Evidence-backed scoring — preserve sources, snippets, timestamps, tool traces, and decision traces
+- [x] Seller-scoped persistence — seller profiles, runs, aliases, evidence, snapshots, and watchlists stored in SQLite
+- [x] Batch processing — upload CSV of companies, dedupe rows, and research all at once
 - [x] Export to CSV — download a ranked opportunity list for your sales team
-- [x] Rate limiting — session-based usage controls (production-ready)
-- [x] Seller context — personalized scoring and framing per seller profile
+- [x] Watchlists — refresh saved accounts and inspect score/signal deltas over time
+- [x] Runtime safety — retries, request timeouts, graceful fallbacks, and batch fault tolerance
+- [x] Rate limiting — session-based usage controls
 - [x] DB-backed memory — past research used as benchmarks for new scoring
 - [ ] Document ingestion — upload prospect PDFs for deeper analysis
 
-## V2 Upgrade Plan
+## V2 Completion Status
 
-### 1. Company Resolution Before Research
-
-Add `resolve_company(company_name)` before the main research loop.
-
-Example target shape:
-
-```json
-{
-  "input_name": "Stripe",
-  "normalized_name": "stripe",
-  "resolved_name": "Stripe, Inc.",
-  "domain": "stripe.com",
-  "website": "https://stripe.com",
-  "company_type": "private",
-  "ticker": null,
-  "cik": null,
-  "industry": "Financial Infrastructure",
-  "confidence": 0.94,
-  "evidence": []
-}
-```
-
-This step determines which tools should run and improves duplicate control.
-
-### 2. Dynamic Freshness Logic
-
-Remove hard-coded years from search queries.
-
-- Use the runtime date
-- Prefer recent windows by tool type
-- Separate recent signals from historical company context
-
-### 3. Conditional Research Tools
-
-Refactor research into modular tools:
-
-- general web search
-- recent news and developments
-- jobs and hiring signals
-- funding and company momentum
-- SEC / filings for public companies
-- website and product positioning analysis
-- optional tech stack or competitor signal search
-
-Tool selection should depend on resolved company type and confidence.
-
-### 4. Evidence and Provenance Tracking
-
-Every tool call should preserve:
-
-- tool name
-- search query
-- source URLs
-- retrieval timestamp
-- evidence snippets
-
-Final output should include:
-
-```json
-{
-  "company": "Stripe",
-  "resolved_company": {},
-  "opportunity_score": 8.1,
-  "trigger_score": 7.8,
-  "score_rationale": "Why this account ranks well",
-  "pain_points": [],
-  "why_now_signals": [],
-  "outreach_angle": "How to approach the account",
-  "confidence": "high",
-  "sources": [],
-  "tool_trace": [],
-  "decision_trace": [],
-  "generated_at": "2026-04-29T00:00:00Z"
-}
-```
-
-Scores must be explainable from evidence.
-
-### 5. Real Seller Personalization
-
-Move from prompt-only personalization to seller-scoped persistence.
-
-Target entities:
-
-- `seller_profiles`
-- `companies`
-- `company_aliases`
-- `research_runs`
-- `evidence_items`
-
-Seller profiles should capture:
-
-- name
-- product description
-- ideal customer profile
-- target industries
-- past wins
-- disqualifiers
-- created at
-
-Research and recommendations should be scoped to that seller.
-
-### 6. Memory Retrieval Fixes
-
-Improve benchmark retrieval so:
-
-- history is seller-scoped
-- examples are tied to the actual selected score row
-- benchmark context reflects the current seller and company type
-
-### 7. Duplicate Control
-
-Normalize and dedupe by:
-
-- company name
-- normalized name
-- domain
-- aliases
-- seller scope
-
-Avoid duplicate records unless the user explicitly requests a refresh or a stale result needs renewal.
-
-### 8. Runtime Safety
-
-Add:
-
-- retries
-- request timeouts
-- failure isolation by tool
-- graceful fallbacks
-- batch fault tolerance
-
-One failed external call should not break a full run.
-
-### 9. Visible Agent Trace UI
-
-Make the system inspectable in the UI:
-
-- company resolution output
-- selected tools
-- searches run
-- sources used
-- scoring inputs
-- decision trace
-- final recommendation path
-
-### 10. Keep the Workflow Focused
-
-The primary product flow stays simple:
-
-Seller profile
-→ upload or enter target accounts
-→ ranked opportunities
-→ inspect one account
-→ view evidence and reasoning
-→ export results
-
-### 11. Basic Test Coverage
-
-Add tests for:
-
-- company resolution schema
-- routing logic
-- seller-scoped memory
-- duplicate handling
-- provenance in outputs
-- error handling in batches
-
-### 12. README and Positioning
-
-Position the project as:
-
-> Commercial Intelligence Agent that turns live company signals, seller context, and agentic search into ranked account briefs with evidence trails and personalized opportunity scoring.
-
-Add over time:
-
-- architecture diagram
-- screenshots
-- example output
-- roadmap
-- live demo walkthrough
+- [x] Company resolution before research
+- [x] Dynamic freshness logic by tool type
+- [x] Conditional research routing for public vs private vs unknown accounts
+- [x] Evidence and provenance capture for every tool result
+- [x] Seller-scoped personalization and persistence
+- [x] Seller-scoped memory retrieval and benchmark fixes
+- [x] Duplicate control using normalized names, domains, aliases, and seller scope
+- [x] Runtime safety with retries, timeouts, graceful fallbacks, and batch isolation
+- [x] Visible trace UI with resolved company, sources, score inputs, tool trace, and decision trace
+- [x] Focused workflow from seller profile to ranked exportable opportunities
+- [x] Test coverage for routing, memory, duplicates, provenance, snapshots, watchlists, and batch error handling
+- [x] README and positioning updated to present the project as a commercial intelligence agent
 
 ## Differentiator: Why-Now Opportunity Signals
 
@@ -407,42 +244,32 @@ The ideal implementation is evidence-first:
 3. Score their sales relevance
 4. Use the model to explain the result clearly
 
-## Longer-Term Direction: Opportunity Signal Intelligence
+## V3 Candidates
 
-After the core v2 system is trustworthy, the next step is persistent monitoring.
+The next step should be a small V3 patch, not a rewrite.
 
-Planned extension:
+Most of the core product work is already done. The remaining work is operational and productization-focused:
 
-- account watchlists
-- recurring refreshes
-- signal change detection over time
-- alerts when new triggers appear
+- scheduled or background watchlist refreshes instead of manual refresh only
+- alerting when new triggers appear on watched accounts
+- stronger observability around latency, failures, and tool-level outcomes
+- optional multi-user/auth support if the app moves beyond a single-operator workflow
+- deployment hardening and soak testing for larger batch runs
+- richer exports or CRM handoff if this becomes part of a real sales workflow
 
-Examples:
+That would shift the system from reactive research to light ongoing opportunity monitoring.
 
-- “Target account raised Series C this week.”
-- “Hiring surge detected in data engineering.”
-- “Competitor partnership may create an opening.”
+## Suggested Next Steps
 
-That shifts the system from reactive research to ongoing opportunity monitoring.
+The project should still evolve incrementally rather than be rewritten.
 
-## Incremental Build Strategy
+Recommended order from here:
 
-The project should evolve incrementally, not be rewritten from scratch unless a later phase proves that necessary.
-
-Recommended implementation order:
-
-1. Data model refactor
-2. Company resolution and normalization
-3. Dynamic freshness windows and modular tools
-4. Evidence and provenance capture
-5. Seller-scoped memory and benchmark fixes
-6. Runtime safety and batch isolation
-7. Inspectable trace UI
-8. Why-now signal engine
-9. Tests
-10. README, screenshots, and demo walkthrough
-11. Watchlists and monitoring after the core system is stable
+1. Add scheduled watchlist refresh and alert generation
+2. Add basic observability and structured run logging
+3. Run larger real-world batch and watchlist soak tests
+4. Improve README screenshots, example output, and demo walkthrough
+5. Add integrations only if they support a real workflow, such as CRM export or notification delivery
 
 ## What I'd Do With More Time
 
