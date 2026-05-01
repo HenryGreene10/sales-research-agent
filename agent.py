@@ -1115,6 +1115,7 @@ def synthesize_brief(
                 "freshness_days": result.get("freshness_days"),
                 "intent": result.get("intent"),
                 "error": result.get("error"),
+                "error_type": result.get("error_type"),
             }
         )
 

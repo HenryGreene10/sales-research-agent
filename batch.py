@@ -50,6 +50,44 @@ def _build_dataframe(rows: list[dict[str, Any]]):
     return _SimpleDataFrame(rows)
 
 
+def parse_company_csv(file_content: bytes | str) -> tuple[list[str], dict[str, int]]:
+    if isinstance(file_content, bytes):
+        text = file_content.decode("utf-8-sig")
+    else:
+        text = file_content
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise ValueError("CSV is empty.")
+
+    header_map = {field.strip().lower(): field for field in reader.fieldnames if field}
+    company_column = header_map.get("company")
+    if not company_column:
+        raise ValueError("CSV must contain a `company` column.")
+
+    companies: list[str] = []
+    seen: set[str] = set()
+    duplicates_removed = 0
+    blank_rows_skipped = 0
+
+    for row in reader:
+        company = (row.get(company_column) or "").strip()
+        if not company:
+            blank_rows_skipped += 1
+            continue
+        normalized = company.casefold()
+        if normalized in seen:
+            duplicates_removed += 1
+            continue
+        seen.add(normalized)
+        companies.append(company)
+
+    return companies, {
+        "duplicates_removed": duplicates_removed,
+        "blank_rows_skipped": blank_rows_skipped,
+    }
+
+
 def process_batch(
     companies: list[str],
     seller_profile: dict,

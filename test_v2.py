@@ -527,6 +527,24 @@ class V2ResearchTests(unittest.TestCase):
         self.assertIn("Error", dataframe.columns)
         self.assertTrue(any(dataframe["Company"] == "Beta"))
 
+    def test_parse_company_csv_dedupes_and_skips_blank_rows(self):
+        companies, stats = batch.parse_company_csv(
+            "company\nStripe\n \nstripe \nSnowflake\n"
+        )
+
+        self.assertEqual(companies, ["Stripe", "Snowflake"])
+        self.assertEqual(stats["duplicates_removed"], 1)
+        self.assertEqual(stats["blank_rows_skipped"], 1)
+
+    def test_parse_company_csv_accepts_case_insensitive_header_and_bom(self):
+        companies, stats = batch.parse_company_csv(
+            b"\xef\xbb\xbfCompany\nNotion\nFigma\n"
+        )
+
+        self.assertEqual(companies, ["Notion", "Figma"])
+        self.assertEqual(stats["duplicates_removed"], 0)
+        self.assertEqual(stats["blank_rows_skipped"], 0)
+
     def test_recent_run_can_be_found_by_resolution_alias_and_domain(self):
         self._completed_run(self.seller_id, "Stripe, Inc.", "private", 7.2, "Alias rationale")
 

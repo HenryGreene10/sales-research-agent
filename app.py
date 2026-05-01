@@ -1,8 +1,7 @@
-import pandas as pd
 import streamlit as st
 
 from agent import build_snapshot_delta, monitor_watchlist, research_company
-from batch import results_to_dataframe, summarize_batch_results
+from batch import parse_company_csv, results_to_dataframe, summarize_batch_results
 from database import (
     company_exists,
     create_or_update_watchlist,
@@ -85,6 +84,20 @@ def render_brief(result: dict, key_prefix: str = "brief"):
 
     if result.get("from_cache"):
         st.info("Showing a fresh cached result for this seller profile.")
+
+    failed_tools = [
+        item for item in (result.get("tool_trace") or [])
+        if item.get("status") == "error"
+    ]
+    if failed_tools:
+        failed_labels = ", ".join(
+            f"{item.get('tool_name')} ({item.get('error_type') or 'Error'})"
+            for item in failed_tools
+        )
+        st.warning(
+            f"Research completed with partial tool failures: {failed_labels}. "
+            "Treat the brief as directional and inspect the trace."
+        )
 
     st.caption(f"Confidence: {confidence}")
     st.divider()
@@ -300,45 +313,54 @@ with tab2:
     uploaded_file = st.file_uploader("Upload CSV", type="csv")
 
     if uploaded_file:
-        df_input = pd.read_csv(uploaded_file)
-        if "company" not in df_input.columns:
-            st.error("CSV must contain a `company` column.")
+        try:
+            companies, parse_stats = parse_company_csv(uploaded_file.getvalue())
+        except UnicodeDecodeError:
+            st.error("Could not read the CSV as UTF-8 text.")
+        except ValueError as exc:
+            st.error(str(exc))
         else:
-            companies = [str(company).strip() for company in df_input["company"].tolist() if str(company).strip()]
-            st.success(f"Found {len(companies)} companies.")
-            st.write(", ".join(companies))
+            if not companies:
+                st.warning("No company names were found in the CSV.")
+            else:
+                st.success(f"Found {len(companies)} unique companies.")
+                st.write(", ".join(companies))
+                if parse_stats["duplicates_removed"]:
+                    st.info(f"Removed {parse_stats['duplicates_removed']} duplicate company rows.")
+                if parse_stats["blank_rows_skipped"]:
+                    st.info(f"Skipped {parse_stats['blank_rows_skipped']} blank rows.")
 
-            if st.button("Research All", type="primary"):
-                results = []
-                progress = st.progress(0)
-                status = st.empty()
+                if st.button("Research All", type="primary"):
+                    results = []
+                    progress = st.progress(0)
+                    status = st.empty()
 
-                for i, company in enumerate(companies):
-                    cached_exists = company_exists(
-                        company,
-                        seller_id=st.session_state["seller_id"],
-                    )
-                    requires_fresh_run = force_refresh_batch or not cached_exists
+                    for i, company in enumerate(companies):
+                        cached_exists = company_exists(
+                            company,
+                            seller_id=st.session_state["seller_id"],
+                        )
+                        requires_fresh_run = force_refresh_batch or not cached_exists
 
-                    if requires_fresh_run and not check_rate_limit():
-                        status.warning(f"Session limit reached after {i} companies.")
-                        break
+                        if requires_fresh_run and not check_rate_limit():
+                            status.warning(f"Session limit reached after {i} companies.")
+                            break
 
-                    status.text(f"Researching {company}... ({i + 1}/{len(companies)})")
-                    result = research_company(
-                        company_name=company,
-                        seller_profile=st.session_state["seller_profile"],
-                        seller_id=st.session_state["seller_id"],
-                        force_refresh=force_refresh_batch,
-                    )
-                    if requires_fresh_run and not result.get("from_cache"):
-                        increment_request_count()
-                    results.append(result)
-                    progress.progress((i + 1) / len(companies))
+                        status.text(f"Researching {company}... ({i + 1}/{len(companies)})")
+                        result = research_company(
+                            company_name=company,
+                            seller_profile=st.session_state["seller_profile"],
+                            seller_id=st.session_state["seller_id"],
+                            force_refresh=force_refresh_batch,
+                        )
+                        if requires_fresh_run and not result.get("from_cache"):
+                            increment_request_count()
+                        results.append(result)
+                        progress.progress((i + 1) / len(companies))
 
-                status.success("Batch research complete.")
-                st.session_state.batch_results = results
-                st.session_state.selected_batch_company = None
+                    status.success("Batch research complete.")
+                    st.session_state.batch_results = results
+                    st.session_state.selected_batch_company = None
 
     batch_results = st.session_state.get("batch_results")
     if batch_results:
@@ -362,21 +384,23 @@ with tab2:
             reverse=True,
         )
 
-        header = st.columns([3, 1, 1, 1, 2])
+        header = st.columns([3, 1, 1, 1, 1, 2])
         header[0].markdown("**Company**")
         header[1].markdown("**Opp.**")
         header[2].markdown("**Trigger**")
         header[3].markdown("**Confidence**")
-        header[4].markdown("")
+        header[4].markdown("**Status**")
+        header[5].markdown("")
 
         for result in sorted_results:
             company = result.get("company", "")
-            row = st.columns([3, 1, 1, 1, 2])
+            row = st.columns([3, 1, 1, 1, 1, 2])
             row[0].write(company)
             row[1].write(f"{result.get('opportunity_score', 0)}/10")
             row[2].write(f"{result.get('trigger_score', 0)}/10")
             row[3].write((result.get("confidence") or "").title())
-            if row[4].button("Inspect", key=f"inspect_{company}"):
+            row[4].write("Failed" if result.get("error") else "OK")
+            if row[5].button("Inspect", key=f"inspect_{company}"):
                 st.session_state.selected_batch_company = company
 
         df_results = results_to_dataframe(sorted_results)

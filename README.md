@@ -19,15 +19,16 @@ What takes a junior analyst 2 hours takes this agent 30 seconds.
 
 ## Current State
 
-The current version is a strong v1 demo:
+The current version is a working V2:
 
 - Streamlit frontend for single-company and batch research
-- Claude tool-use loop for autonomous retrieval
-- Tavily-backed live search for company signals
-- SQLite-backed research history and lightweight benchmark memory
-- Seller-context-aware scoring and brief generation
+- Company resolution and seller-scoped duplicate control
+- Dynamic tool routing and freshness windows by company type
+- Evidence-backed scoring with traceable sources and decision paths
+- SQLite-backed seller memory, run history, snapshots, and watchlists
+- Runtime safety with retries, request timeouts, graceful fallbacks, and batch fault tolerance
 
-Today the system proves the workflow. The v2 goal is to make it more trustworthy, fresher, more personalized, more inspectable, and more differentiated.
+The core V2 workflow is implemented. What remains is production polish: more screenshots and docs, larger-scale soak testing, and operational automation around recurring refreshes.
 
 ## V2 Direction
 
@@ -149,6 +150,14 @@ Persistence
 → duplicate control
 → future watchlists / monitoring
 ```
+
+## Operational Notes
+
+- Batch uploads accept UTF-8 CSV files with a `company` column.
+- Duplicate company rows in a batch are removed before research.
+- External Tavily and Claude calls use retries plus request timeouts.
+- Partial tool failures do not abort a research run; the UI surfaces those failures in the trace.
+- Batch runs continue even if one account fails.
 
 ## Setup
 
