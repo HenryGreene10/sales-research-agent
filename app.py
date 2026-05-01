@@ -1,7 +1,10 @@
+import csv
+import io
+
 import streamlit as st
 
 from agent import build_snapshot_delta, monitor_watchlist, research_company
-from batch import parse_company_csv, results_to_dataframe, summarize_batch_results
+import batch as batch_utils
 from database import (
     company_exists,
     create_or_update_watchlist,
@@ -14,6 +17,49 @@ from database import (
     save_seller_profile,
 )
 from limiter import check_rate_limit, increment_request_count, requests_remaining
+
+
+def _legacy_parse_company_csv(file_content: bytes | str) -> tuple[list[str], dict[str, int]]:
+    if isinstance(file_content, bytes):
+        text = file_content.decode("utf-8-sig")
+    else:
+        text = file_content
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise ValueError("CSV is empty.")
+
+    header_map = {field.strip().lower(): field for field in reader.fieldnames if field}
+    company_column = header_map.get("company")
+    if not company_column:
+        raise ValueError("CSV must contain a `company` column.")
+
+    companies: list[str] = []
+    seen: set[str] = set()
+    duplicates_removed = 0
+    blank_rows_skipped = 0
+
+    for row in reader:
+        company = (row.get(company_column) or "").strip()
+        if not company:
+            blank_rows_skipped += 1
+            continue
+        normalized = company.casefold()
+        if normalized in seen:
+            duplicates_removed += 1
+            continue
+        seen.add(normalized)
+        companies.append(company)
+
+    return companies, {
+        "duplicates_removed": duplicates_removed,
+        "blank_rows_skipped": blank_rows_skipped,
+    }
+
+
+parse_company_csv = getattr(batch_utils, "parse_company_csv", _legacy_parse_company_csv)
+results_to_dataframe = batch_utils.results_to_dataframe
+summarize_batch_results = batch_utils.summarize_batch_results
 
 init_db()
 
